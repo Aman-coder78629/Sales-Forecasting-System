@@ -60,12 +60,6 @@ Video Game Sales Dataset
 
 Used for understanding multi-source data analysis and anomaly detection techniques.
 
-Dataset Source
-
-https://www.kaggle.com/datasets/gregorut/videogamesales
-
----
-
 # 🛠 Technologies Used
 
 ## Programming Language
@@ -416,8 +410,3 @@ This project demonstrates how Data Science can improve business performance by
 - Power BI
 - Data Visualization
 
-
-
----
-
-# ⭐ If you found this project helpful, consider giving it a Star on GitHub!

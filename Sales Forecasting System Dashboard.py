@@ -1,7 +1,7 @@
 
 # ============================================================
 # SALES FORECASTING & INTELLIGENCE DASHBOARD
-# Complete Streamlit Application
+# Complete Integrated Project - 7 Modules
 # ============================================================
 
 import streamlit as st
@@ -10,7 +10,6 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 import matplotlib.pyplot as plt
-
 import warnings
 import io
 import re
@@ -19,11 +18,7 @@ import zipfile
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
 from sklearn.ensemble import IsolationForest
-from sklearn.metrics import (
-    mean_absolute_error,
-    mean_squared_error,
-    r2_score
-)
+from sklearn.metrics import mean_absolute_error, mean_squared_error
 
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 from statsmodels.tsa.seasonal import seasonal_decompose
@@ -106,7 +101,7 @@ div[data-testid="stDataFrame"] {
 }
 
 .stButton button {
-    border-radius: 8px;
+    border-radius: 9px;
     font-weight: 600;
 }
 
@@ -147,11 +142,15 @@ def load_data(file_bytes, file_name):
 
     if file_name.endswith((".xlsx", ".xls")):
 
-        df = pd.read_excel(io.BytesIO(file_bytes))
+        df = pd.read_excel(
+            io.BytesIO(file_bytes)
+        )
 
     elif file_name.endswith(".zip"):
 
-        with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
+        with zipfile.ZipFile(
+            io.BytesIO(file_bytes)
+        ) as z:
 
             csv_files = [
                 f for f in z.namelist()
@@ -164,21 +163,43 @@ def load_data(file_bytes, file_name):
                     "No CSV file found inside ZIP."
                 )
 
-            with z.open(csv_files[0]) as f:
-                df = pd.read_csv(f)
+            with z.open(csv_files[0]) as file:
+
+                try:
+                    df = pd.read_csv(file)
+
+                except UnicodeDecodeError:
+
+                    file.seek(0)
+
+                    df = pd.read_csv(
+                        file,
+                        encoding="latin1"
+                    )
 
     elif file_name.endswith(".csv"):
 
-        df = pd.read_csv(io.BytesIO(file_bytes))
+        try:
+
+            df = pd.read_csv(
+                io.BytesIO(file_bytes)
+            )
+
+        except UnicodeDecodeError:
+
+            df = pd.read_csv(
+                io.BytesIO(file_bytes),
+                encoding="latin1"
+            )
 
     else:
 
         raise ValueError(
-            "Unsupported format. Upload CSV, ZIP or Excel."
+            "Upload CSV, ZIP, XLSX or XLS."
         )
 
     if df.empty:
-        raise ValueError("Uploaded dataset is empty.")
+        raise ValueError("Dataset is empty.")
 
     return df
 
@@ -206,34 +227,49 @@ def preprocess_data(data):
 
     column_mapping = {
 
+        # Date
+
         "orderdate": "Order Date",
         "date": "Order Date",
         "salesdate": "Order Date",
         "transactiondate": "Order Date",
 
+        # Sales
+
         "sales": "Sales",
         "revenue": "Sales",
         "totalsales": "Sales",
         "amount": "Sales",
+        "weekly_sales": "Sales",
+        "weeklysales": "Sales",
+
+        # Category
 
         "category": "Category",
         "productcategory": "Category",
         "family": "Category",
+
+        # Region / Store
 
         "region": "Region",
         "store": "Region",
         "storenbr": "Region",
         "storeid": "Region",
 
+        # Product
+
         "productname": "Product Name",
         "product": "Product Name",
         "item": "Product Name",
+
+        # Other columns
 
         "subcategory": "Sub-Category",
         "orderid": "Order ID",
         "customerid": "Customer ID",
         "segment": "Segment",
         "shipmode": "Ship Mode"
+
     }
 
     df.rename(
@@ -243,21 +279,24 @@ def preprocess_data(data):
 
     # Validate required columns
 
-    required = ["Order Date", "Sales"]
+    required_columns = [
+        "Order Date",
+        "Sales"
+    ]
 
-    missing = [
-        col for col in required
+    missing_columns = [
+        col for col in required_columns
         if col not in df.columns
     ]
 
-    if missing:
+    if missing_columns:
 
         raise ValueError(
-            f"Required columns missing: {missing}. "
+            f"Missing required columns: {missing_columns}. "
             f"Available columns: {df.columns.tolist()}"
         )
 
-    # Convert dates
+    # Date conversion
 
     dates = pd.to_datetime(
         df["Order Date"],
@@ -274,13 +313,14 @@ def preprocess_data(data):
 
     df["Order Date"] = dates
 
-    # Convert sales
+    # Sales conversion
 
     df["Sales"] = (
         df["Sales"]
         .astype(str)
         .str.replace(",", "", regex=False)
         .str.replace("$", "", regex=False)
+        .str.replace("₹", "", regex=False)
         .str.strip()
     )
 
@@ -297,6 +337,7 @@ def preprocess_data(data):
     )
 
     if df.empty:
+
         raise ValueError(
             "No valid date and sales records found."
         )
@@ -317,13 +358,17 @@ def preprocess_data(data):
     if "Product Name" not in df.columns:
 
         if "Category" in df.columns:
+
             df["Product Name"] = df["Category"]
+
         else:
+
             df["Product Name"] = "Unknown"
 
     for col in optional_columns:
 
         if col not in df.columns:
+
             df[col] = "Unknown"
 
         df[col] = (
@@ -335,15 +380,26 @@ def preprocess_data(data):
     # Feature engineering
 
     df["Year"] = df["Order Date"].dt.year
+
     df["Month"] = df["Order Date"].dt.month
-    df["Month Name"] = df["Order Date"].dt.month_name()
-    df["Quarter"] = df["Order Date"].dt.quarter
+
+    df["Month Name"] = (
+        df["Order Date"].dt.month_name()
+    )
+
+    df["Quarter"] = (
+        df["Order Date"].dt.quarter
+    )
+
+    df["Year-Month"] = (
+        df["Order Date"].dt.to_period("M").astype(str)
+    )
 
     return df.sort_values("Order Date")
 
 
 # ============================================================
-# 6. UPLOAD DATASET
+# 6. DATA UPLOAD
 # ============================================================
 
 st.sidebar.markdown("---")
@@ -369,34 +425,52 @@ if uploaded_file is not None:
             "Dataset loaded successfully!"
         )
 
-        with st.expander("Check Dataset Information"):
+        with st.expander(
+            "📁 Check Dataset Information"
+        ):
 
-            st.write("Original Columns:")
-            st.write(raw_data.columns.tolist())
+            st.write("Original Columns")
 
-            st.write("Processed Columns:")
-            st.write(df.columns.tolist())
+            st.write(
+                raw_data.columns.tolist()
+            )
 
-            st.write("Dataset Shape:", df.shape)
+            st.write("Processed Columns")
 
-            st.dataframe(df.head())
+            st.write(
+                df.columns.tolist()
+            )
+
+            st.write(
+                "Dataset Shape:",
+                df.shape
+            )
+
+            st.dataframe(
+                df.head(),
+                use_container_width=True
+            )
 
     except Exception as e:
 
-        st.error(f"Dataset loading error: {e}")
+        st.error(
+            f"Dataset loading error: {e}"
+        )
+
         st.stop()
 
 else:
 
-    st.title("📊 Sales Intelligence Dashboard")
+    st.title(
+        "📊 Sales Intelligence Dashboard"
+    )
 
     st.warning(
         "Please upload your sales dataset using the sidebar."
     )
 
     st.info(
-        "Required columns: Order Date and Sales. "
-        "Category, Region and Product Name are optional."
+        "Required columns: Order Date and Sales."
     )
 
     st.stop()
@@ -421,22 +495,26 @@ date_range = st.sidebar.date_input(
 
 filtered_df = df.copy()
 
-if isinstance(date_range, (tuple, list)) and len(date_range) == 2:
+if isinstance(date_range, (tuple, list)):
 
-    filtered_df = filtered_df[
-        filtered_df["Order Date"].dt.date.between(
-            date_range[0],
-            date_range[1]
-        )
-    ]
+    if len(date_range) == 2:
 
-elif isinstance(date_range, (tuple, list)) and len(date_range) == 1:
+        filtered_df = filtered_df[
+            filtered_df["Order Date"].dt.date.between(
+                date_range[0],
+                date_range[1]
+            )
+        ]
 
-    filtered_df = filtered_df[
-        filtered_df["Order Date"].dt.date == date_range[0]
-    ]
+    elif len(date_range) == 1:
 
-regions = sorted(filtered_df["Region"].unique())
+        filtered_df = filtered_df[
+            filtered_df["Order Date"].dt.date == date_range[0]
+        ]
+
+regions = sorted(
+    filtered_df["Region"].unique()
+)
 
 selected_regions = st.sidebar.multiselect(
     "Select Region",
@@ -448,7 +526,9 @@ filtered_df = filtered_df[
     filtered_df["Region"].isin(selected_regions)
 ]
 
-categories = sorted(filtered_df["Category"].unique())
+categories = sorted(
+    filtered_df["Category"].unique()
+)
 
 selected_categories = st.sidebar.multiselect(
     "Select Category",
@@ -463,7 +543,7 @@ filtered_df = filtered_df[
 if filtered_df.empty:
 
     st.warning(
-        "No records found. Please change your filters."
+        "No records found for the selected filters."
     )
 
     st.stop()
@@ -473,25 +553,81 @@ if filtered_df.empty:
 # 8. COMMON FUNCTIONS
 # ============================================================
 
+def format_currency(value):
+
+    return f"${value:,.2f}"
+
+
 def monthly_sales(data):
 
     monthly = (
-        data.groupby(
-            pd.Grouper(
-                key="Order Date",
-                freq="ME"
-            )
-        )["Sales"]
+        data.groupby("Year-Month")["Sales"]
         .sum()
         .reset_index()
     )
 
-    return monthly
+    monthly["Order Date"] = pd.to_datetime(
+        monthly["Year-Month"]
+    )
+
+    return monthly.sort_values("Order Date")
 
 
-def format_currency(value):
+def prepare_time_series(data):
 
-    return f"${value:,.2f}"
+    monthly = monthly_sales(data)
+
+    ts = monthly.set_index(
+        "Order Date"
+    )["Sales"]
+
+    ts = ts.asfreq("MS").fillna(0)
+
+    return ts
+
+
+def make_sarima_model(series):
+
+    model = SARIMAX(
+        series,
+        order=(1, 1, 1),
+        seasonal_order=(1, 1, 1, 12),
+        enforce_stationarity=False,
+        enforce_invertibility=False
+    )
+
+    return model.fit(
+        disp=False,
+        maxiter=200
+    )
+
+
+def generate_forecast(data, periods):
+
+    ts = prepare_time_series(data)
+
+    if len(ts) < 24:
+
+        raise ValueError(
+            "At least 24 monthly observations are recommended."
+        )
+
+    model = make_sarima_model(ts)
+
+    forecast_result = model.get_forecast(
+        steps=periods
+    )
+
+    forecast = forecast_result.predicted_mean
+
+    confidence = forecast_result.conf_int()
+
+    return (
+        ts,
+        forecast,
+        confidence,
+        model
+    )
 
 
 def plot_layout(fig, title=None):
@@ -530,87 +666,18 @@ def download_csv(data, filename):
     )
 
 
-def prepare_time_series(data):
-
-    monthly = monthly_sales(data)
-
-    ts = monthly.set_index(
-        "Order Date"
-    )["Sales"]
-
-    ts = ts.asfreq("ME").fillna(0)
-
-    return ts
-
-
-def make_sarima_model(series):
-
-    model = SARIMAX(
-        series,
-        order=(1, 1, 1),
-        seasonal_order=(1, 1, 1, 12),
-        enforce_stationarity=False,
-        enforce_invertibility=False
-    )
-
-    return model.fit(disp=False)
-
-
-def generate_forecast(data, periods=3):
-
-    ts = prepare_time_series(data)
-
-    if len(ts) < 24:
-
-        raise ValueError(
-            "At least 24 monthly observations "
-            "are required for seasonal SARIMA."
-        )
-
-    result = make_sarima_model(ts)
-
-    forecast = result.get_forecast(
-        steps=periods
-    )
-
-    forecast_values = forecast.predicted_mean
-
-    confidence = forecast.conf_int()
-
-    return ts, forecast_values, confidence, result
-
-
-def calculate_metrics(actual, predicted):
-
-    mae = mean_absolute_error(
-        actual,
-        predicted
-    )
-
-    rmse = np.sqrt(
-        mean_squared_error(
-            actual,
-            predicted
-        )
-    )
-
-    r2 = (
-        r2_score(actual, predicted)
-        if len(actual) > 1
-        else np.nan
-    )
-
-    return mae, rmse, r2
-
-
-def create_forecast_chart(ts, forecast, confidence):
+def create_forecast_chart(
+    historical,
+    forecast,
+    confidence
+):
 
     fig = go.Figure()
 
     fig.add_trace(
         go.Scatter(
-            x=ts.index,
-            y=ts.values,
+            x=historical.index,
+            y=historical.values,
             mode="lines+markers",
             name="Historical Sales",
             line=dict(
@@ -638,11 +705,18 @@ def create_forecast_chart(ts, forecast, confidence):
         go.Scatter(
             x=list(forecast.index) +
               list(forecast.index[::-1]),
+
             y=list(confidence.iloc[:, 1]) +
               list(confidence.iloc[:, 0][::-1]),
+
             fill="toself",
+
             fillcolor="rgba(245,158,11,0.15)",
-            line=dict(color="rgba(255,255,255,0)"),
+
+            line=dict(
+                color="rgba(255,255,255,0)"
+            ),
+
             name="Confidence Interval"
         )
     )
@@ -654,32 +728,33 @@ def create_forecast_chart(ts, forecast, confidence):
 
 
 # ============================================================
-# 9. EXECUTIVE DASHBOARD
+# 9. MODULE 1: EXECUTIVE DASHBOARD
 # ============================================================
 
 if menu == "Executive Dashboard":
 
-    st.title("📊 Sales Intelligence Dashboard")
+    st.title(
+        "📊 Sales Intelligence Dashboard"
+    )
 
     st.markdown(
         "### Business Performance Overview"
     )
 
     st.caption(
-        "Monitor revenue, transactions, products "
-        "and regional sales performance."
+        "Monitor revenue, orders, products, "
+        "categories and regional performance."
     )
 
     total_sales = filtered_df["Sales"].sum()
 
-    # Avoid presenting Unknown as a real order count
+    valid_orders = filtered_df[
+        filtered_df["Order ID"] != "Unknown"
+    ]
 
-    if (filtered_df["Order ID"] != "Unknown").any():
+    if not valid_orders.empty:
 
-        total_orders = filtered_df.loc[
-            filtered_df["Order ID"] != "Unknown",
-            "Order ID"
-        ].nunique()
+        total_orders = valid_orders["Order ID"].nunique()
 
     else:
 
@@ -690,6 +765,8 @@ if menu == "Executive Dashboard":
     total_products = (
         filtered_df["Product Name"].nunique()
     )
+
+    # KPI Cards
 
     col1, col2, col3, col4 = st.columns(4)
 
@@ -714,6 +791,8 @@ if menu == "Executive Dashboard":
     )
 
     st.markdown("---")
+
+    # Monthly Trend
 
     monthly = monthly_sales(filtered_df)
 
@@ -741,6 +820,8 @@ if menu == "Executive Dashboard":
             use_container_width=True
         )
 
+    # Category Sales
+
     with right:
 
         category_sales = (
@@ -763,6 +844,8 @@ if menu == "Executive Dashboard":
         )
 
     left, right = st.columns(2)
+
+    # Region Sales
 
     with left:
 
@@ -787,6 +870,8 @@ if menu == "Executive Dashboard":
             use_container_width=True
         )
 
+    # Top Products
+
     with right:
 
         top_products = (
@@ -810,7 +895,38 @@ if menu == "Executive Dashboard":
             use_container_width=True
         )
 
-    st.markdown("### Recent Transactions")
+    # Monthly Category Comparison
+
+    st.subheader(
+        "Monthly Category Performance"
+    )
+
+    category_monthly = (
+        filtered_df.groupby(
+            ["Year-Month", "Category"]
+        )["Sales"]
+        .sum()
+        .reset_index()
+    )
+
+    fig = px.line(
+        category_monthly,
+        x="Year-Month",
+        y="Sales",
+        color="Category",
+        markers=True
+    )
+
+    st.plotly_chart(
+        plot_layout(fig),
+        use_container_width=True
+    )
+
+    # Transactions
+
+    st.subheader(
+        "Recent Transactions"
+    )
 
     st.dataframe(
         filtered_df.sort_values(
@@ -822,15 +938,17 @@ if menu == "Executive Dashboard":
 
 
 # ============================================================
-# 10. DATA LOADING & EXPLORATORY DATA ANALYSIS
+# 10. MODULE 2: DATA LOADING & EDA
 # ============================================================
 
 elif menu == "Data Loading & EDA":
 
-    st.title("📁 Data Loading & Exploratory Data Analysis")
+    st.title(
+        "📁 Data Loading & Exploratory Data Analysis"
+    )
 
     st.markdown(
-        "### Understand the structure and quality of your sales data."
+        "### Explore dataset structure, quality and sales patterns."
     )
 
     c1, c2, c3, c4 = st.columns(4)
@@ -842,17 +960,17 @@ elif menu == "Data Loading & EDA":
 
     c2.metric(
         "Total Columns",
-        f"{filtered_df.shape[1]}"
+        filtered_df.shape[1]
     )
 
     c3.metric(
         "Missing Values",
-        f"{filtered_df.isnull().sum().sum():,}"
+        filtered_df.isnull().sum().sum()
     )
 
     c4.metric(
         "Duplicate Records",
-        f"{filtered_df.duplicated().sum():,}"
+        filtered_df.duplicated().sum()
     )
 
     tab1, tab2, tab3, tab4 = st.tabs(
@@ -864,16 +982,22 @@ elif menu == "Data Loading & EDA":
         ]
     )
 
+    # Dataset Preview
+
     with tab1:
 
-        st.subheader("Dataset Preview")
+        st.subheader(
+            "Dataset Preview"
+        )
 
         st.dataframe(
             filtered_df.head(100),
             use_container_width=True
         )
 
-        st.subheader("Statistical Summary")
+        st.subheader(
+            "Statistical Summary"
+        )
 
         st.dataframe(
             filtered_df.describe(
@@ -887,9 +1011,13 @@ elif menu == "Data Loading & EDA":
             "sales_dataset.csv"
         )
 
+    # Data Quality
+
     with tab2:
 
-        st.subheader("Missing Value Analysis")
+        st.subheader(
+            "Missing Value Analysis"
+        )
 
         missing = pd.DataFrame({
 
@@ -898,17 +1026,15 @@ elif menu == "Data Loading & EDA":
             "Missing Values":
                 filtered_df.isnull().sum().values,
 
-            "Missing Percentage":
-                (
-                    filtered_df.isnull().mean().values * 100
-                ).round(2)
+            "Missing Percentage": (
+                filtered_df.isnull().mean().values * 100
+            ).round(2)
 
         })
 
         st.dataframe(
             missing,
-            use_container_width=True,
-            hide_index=True
+            use_container_width=True
         )
 
         fig = px.bar(
@@ -923,13 +1049,20 @@ elif menu == "Data Loading & EDA":
             use_container_width=True
         )
 
-        st.write("Duplicate Records")
-
-        st.write(
-            filtered_df[
-                filtered_df.duplicated(keep=False)
-            ].head(100)
+        st.subheader(
+            "Duplicate Records"
         )
+
+        duplicate_data = filtered_df[
+            filtered_df.duplicated(keep=False)
+        ]
+
+        st.dataframe(
+            duplicate_data.head(100),
+            use_container_width=True
+        )
+
+    # Sales Analysis
 
     with tab3:
 
@@ -987,7 +1120,10 @@ elif menu == "Data Loading & EDA":
             filtered_df.groupby("Sub-Category")["Sales"]
             .sum()
             .reset_index()
-            .sort_values("Sales", ascending=False)
+            .sort_values(
+                "Sales",
+                ascending=False
+            )
         )
 
         fig = px.bar(
@@ -1001,6 +1137,28 @@ elif menu == "Data Loading & EDA":
             plot_layout(fig),
             use_container_width=True
         )
+
+        # Region sales
+
+        region_sales = (
+            filtered_df.groupby("Region")["Sales"]
+            .sum()
+            .reset_index()
+        )
+
+        fig = px.pie(
+            region_sales,
+            names="Region",
+            values="Sales",
+            title="Regional Revenue Distribution"
+        )
+
+        st.plotly_chart(
+            plot_layout(fig),
+            use_container_width=True
+        )
+
+    # Correlation Analysis
 
     with tab4:
 
@@ -1028,20 +1186,22 @@ elif menu == "Data Loading & EDA":
         else:
 
             st.info(
-                "At least two numeric columns are needed."
+                "At least two numeric columns are required."
             )
 
 
 # ============================================================
-# 11. TIME SERIES ANALYSIS
+# 11. MODULE 3: TIME SERIES ANALYSIS
 # ============================================================
 
 elif menu == "Time Series Analysis":
 
-    st.title("📈 Time Series Analysis")
+    st.title(
+        "📈 Time Series Analysis"
+    )
 
     st.markdown(
-        "### Monthly sales trends, seasonality and decomposition."
+        "### Analyze sales trends, seasonality and autocorrelation."
     )
 
     ts = prepare_time_series(filtered_df)
@@ -1065,6 +1225,8 @@ elif menu == "Time Series Analysis":
 
     st.markdown("---")
 
+    # Monthly Sales
+
     fig = px.line(
         ts.reset_index(),
         x="Order Date",
@@ -1078,9 +1240,47 @@ elif menu == "Time Series Analysis":
         use_container_width=True
     )
 
-    if len(ts) >= 24:
+    # Rolling Average
 
-        st.subheader("Seasonal Decomposition")
+    st.subheader(
+        "Rolling Average Analysis"
+    )
+
+    window = st.slider(
+        "Select Rolling Window",
+        2,
+        min(12, max(2, len(ts))),
+        min(3, max(2, len(ts))),
+        key="rolling_window"
+    )
+
+    rolling = pd.DataFrame({
+
+        "Actual Sales": ts,
+
+        "Rolling Average": ts.rolling(
+            window=window
+        ).mean()
+
+    })
+
+    fig = px.line(
+        rolling,
+        title="Actual Sales vs Rolling Average"
+    )
+
+    st.plotly_chart(
+        plot_layout(fig),
+        use_container_width=True
+    )
+
+    # Seasonal Decomposition
+
+    st.subheader(
+        "Seasonal Decomposition"
+    )
+
+    if len(ts) >= 24:
 
         period = st.selectbox(
             "Select Seasonal Period",
@@ -1107,13 +1307,13 @@ elif menu == "Time Series Analysis":
 
             })
 
-            for column in components.columns:
+            for col in components.columns:
 
                 fig = px.line(
                     components.reset_index(),
                     x="Order Date",
-                    y=column,
-                    title=f"{column} Component"
+                    y=col,
+                    title=f"{col} Component"
                 )
 
                 st.plotly_chart(
@@ -1124,7 +1324,7 @@ elif menu == "Time Series Analysis":
         except Exception as e:
 
             st.warning(
-                f"Decomposition could not be generated: {e}"
+                f"Decomposition error: {e}"
             )
 
     else:
@@ -1134,7 +1334,11 @@ elif menu == "Time Series Analysis":
             "for seasonal decomposition."
         )
 
-    st.subheader("Autocorrelation Analysis")
+    # ACF and PACF
+
+    st.subheader(
+        "Autocorrelation Analysis"
+    )
 
     if len(ts) >= 5:
 
@@ -1145,7 +1349,9 @@ elif menu == "Time Series Analysis":
 
         if max_lags >= 1:
 
-            fig, ax = plt.subplots(figsize=(12, 4))
+            fig, ax = plt.subplots(
+                figsize=(12, 4)
+            )
 
             plot_acf(
                 ts,
@@ -1160,7 +1366,9 @@ elif menu == "Time Series Analysis":
             st.pyplot(fig)
             plt.close(fig)
 
-            fig, ax = plt.subplots(figsize=(12, 4))
+            fig, ax = plt.subplots(
+                figsize=(12, 4)
+            )
 
             plot_pacf(
                 ts,
@@ -1179,23 +1387,30 @@ elif menu == "Time Series Analysis":
     else:
 
         st.info(
-            "More monthly observations are needed for ACF/PACF."
+            "More observations are required for ACF/PACF."
         )
 
 
 # ============================================================
-# 12. SALES FORECASTING
+# 12. MODULE 4: SALES FORECASTING
 # ============================================================
 
 elif menu == "Sales Forecasting":
 
-    st.title("🔮 Sales Forecasting Model")
+    st.title(
+        "🔮 Sales Forecasting Model"
+    )
 
     st.markdown(
         "### Predict future sales using seasonal SARIMAX."
     )
 
     ts = prepare_time_series(filtered_df)
+
+    st.metric(
+        "Available Historical Months",
+        len(ts)
+    )
 
     periods = st.slider(
         "Forecast Horizon (Months)",
@@ -1204,16 +1419,11 @@ elif menu == "Sales Forecasting":
         value=3
     )
 
-    st.write(
-        f"Available monthly observations: {len(ts)}"
-    )
-
     if len(ts) < 24:
 
         st.error(
             "At least 24 monthly observations are recommended "
-            "for the seasonal SARIMA model. Upload a dataset "
-            "with a longer historical period."
+            "for seasonal SARIMAX."
         )
 
     else:
@@ -1224,14 +1434,12 @@ elif menu == "Sales Forecasting":
         ):
 
             with st.spinner(
-                "Training SARIMA model and generating forecast..."
+                "Training SARIMAX model..."
             ):
 
                 try:
 
-                    # ----------------------------------------
-                    # Train-test evaluation
-                    # ----------------------------------------
+                    # Chronological holdout evaluation
 
                     test_size = min(
                         3,
@@ -1241,40 +1449,51 @@ elif menu == "Sales Forecasting":
                     train = ts.iloc[:-test_size]
                     test = ts.iloc[-test_size:]
 
-                    evaluation_result = None
+                    evaluation = None
 
                     if len(train) >= 24:
 
-                        evaluation_model = make_sarima_model(
-                            train
+                        evaluation_model = (
+                            make_sarima_model(train)
                         )
 
-                        evaluation_forecast = (
+                        test_predictions = (
                             evaluation_model.get_forecast(
                                 steps=len(test)
                             ).predicted_mean
                         )
 
-                        mae, rmse, r2 = calculate_metrics(
+                        mae = mean_absolute_error(
                             test.values,
-                            evaluation_forecast.values
+                            test_predictions.values
                         )
 
-                        evaluation_result = (
-                            mae,
-                            rmse,
-                            r2
+                        rmse = np.sqrt(
+                            mean_squared_error(
+                                test.values,
+                                test_predictions.values
+                            )
                         )
 
-                    # ----------------------------------------
-                    # Final model on full dataset
-                    # ----------------------------------------
+                        evaluation = {
+                            "MAE": mae,
+                            "RMSE": rmse
+                        }
 
-                    ts, forecast, confidence, model = (
-                        generate_forecast(
-                            filtered_df,
-                            periods
-                        )
+                    # Final model using all available data
+
+                    model = make_sarima_model(ts)
+
+                    forecast_result = model.get_forecast(
+                        steps=periods
+                    )
+
+                    forecast = (
+                        forecast_result.predicted_mean
+                    )
+
+                    confidence = (
+                        forecast_result.conf_int()
                     )
 
                     st.session_state["sales_forecast"] = (
@@ -1283,10 +1502,8 @@ elif menu == "Sales Forecasting":
                         confidence
                     )
 
-                    st.session_state["sales_model"] = model
-
                     st.session_state["sales_evaluation"] = (
-                        evaluation_result
+                        evaluation
                     )
 
                     st.success(
@@ -1299,44 +1516,48 @@ elif menu == "Sales Forecasting":
                         f"Forecasting error: {e}"
                     )
 
+        # Display results
+
         if "sales_forecast" in st.session_state:
 
-            ts_saved, forecast, confidence = (
+            historical, forecast, confidence = (
                 st.session_state["sales_forecast"]
             )
 
-            st.subheader("Forecast Results")
+            evaluation = st.session_state.get(
+                "sales_evaluation"
+            )
 
-            if st.session_state.get("sales_evaluation"):
+            st.subheader(
+                "Model Evaluation"
+            )
 
-                mae, rmse, r2 = (
-                    st.session_state["sales_evaluation"]
-                )
+            if evaluation is not None:
 
-                c1, c2, c3 = st.columns(3)
+                c1, c2 = st.columns(2)
 
                 c1.metric(
                     "Mean Absolute Error",
-                    format_currency(mae)
+                    format_currency(evaluation["MAE"])
                 )
 
                 c2.metric(
                     "Root Mean Squared Error",
-                    format_currency(rmse)
+                    format_currency(evaluation["RMSE"])
                 )
 
-                c3.metric(
-                    "R² Score",
-                    f"{r2:.3f}" if np.isfinite(r2) else "N/A"
+            else:
+
+                st.info(
+                    "Forecast generated. A separate holdout "
+                    "evaluation needs at least 24 training months "
+                    "after reserving test observations."
                 )
 
-                st.caption(
-                    "Evaluation uses a chronological holdout. "
-                    "R² may be unreliable with very small test sets."
-                )
+            # Forecast chart
 
             fig = create_forecast_chart(
-                ts_saved,
+                historical,
                 forecast,
                 confidence
             )
@@ -1346,9 +1567,11 @@ elif menu == "Sales Forecasting":
                 use_container_width=True
             )
 
+            # Forecast table
+
             forecast_df = pd.DataFrame({
 
-                "Date": forecast.index,
+                "Forecast Date": forecast.index,
 
                 "Forecasted Sales": forecast.values,
 
@@ -1358,14 +1581,13 @@ elif menu == "Sales Forecasting":
 
             })
 
+            st.subheader(
+                "Forecast Results"
+            )
+
             st.dataframe(
                 forecast_df,
                 use_container_width=True
-            )
-
-            download_csv(
-                forecast_df,
-                "sales_forecast.csv"
             )
 
             st.metric(
@@ -1373,36 +1595,46 @@ elif menu == "Sales Forecasting":
                 format_currency(forecast.sum())
             )
 
+            download_csv(
+                forecast_df,
+                "sales_forecast.csv"
+            )
+
             st.caption(
-                "Forecast values are model estimates, not guaranteed sales."
+                "Forecasts are estimates and confidence intervals "
+                "represent model uncertainty."
             )
 
 
 # ============================================================
-# 13. CATEGORY & REGION FORECASTING
+# 13. MODULE 5: CATEGORY & REGION FORECASTING
 # ============================================================
 
 elif menu == "Category & Region Forecasting":
 
-    st.title("📊 Category & Region Forecasting")
-
-    st.markdown(
-        "### Forecast sales separately for different business segments."
+    st.title(
+        "📊 Category & Region Forecasting"
     )
 
-    forecast_dimension = st.selectbox(
+    st.markdown(
+        "### Predict future sales for individual business segments."
+    )
+
+    dimension = st.selectbox(
         "Select Forecasting Dimension",
         ["Category", "Region"]
     )
 
     available_groups = sorted(
-        filtered_df[forecast_dimension].unique()
+        filtered_df[dimension].unique()
     )
 
     selected_groups = st.multiselect(
-        f"Select {forecast_dimension}",
+        f"Select {dimension}",
         available_groups,
-        default=available_groups[:min(5, len(available_groups))]
+        default=available_groups[
+            :min(5, len(available_groups))
+        ]
     )
 
     periods = st.slider(
@@ -1410,7 +1642,7 @@ elif menu == "Category & Region Forecasting":
         1,
         12,
         3,
-        key="group_periods"
+        key="segment_periods"
     )
 
     if st.button(
@@ -1422,80 +1654,99 @@ elif menu == "Category & Region Forecasting":
 
         progress = st.progress(0)
 
-        for i, group in enumerate(selected_groups):
+        if not selected_groups:
 
-            group_data = filtered_df[
-                filtered_df[forecast_dimension] == group
-            ]
-
-            group_ts = prepare_time_series(group_data)
-
-            if len(group_ts) < 24:
-
-                st.warning(
-                    f"{group}: Not enough monthly history. "
-                    "At least 24 observations are recommended."
-                )
-
-                progress.progress(
-                    (i + 1) / max(len(selected_groups), 1)
-                )
-
-                continue
-
-            try:
-
-                model = make_sarima_model(group_ts)
-
-                forecast = model.get_forecast(
-                    steps=periods
-                )
-
-                predictions = forecast.predicted_mean
-
-                for date, value in predictions.items():
-
-                    results.append({
-
-                        forecast_dimension: group,
-
-                        "Forecast Date": date,
-
-                        "Forecasted Sales": value
-
-                    })
-
-            except Exception as e:
-
-                st.warning(
-                    f"Forecast failed for {group}: {e}"
-                )
-
-            progress.progress(
-                (i + 1) / max(len(selected_groups), 1)
-            )
-
-        if results:
-
-            result_df = pd.DataFrame(results)
-
-            st.session_state["segment_forecast"] = result_df
-
-            st.success(
-                "Segment forecasting completed!"
+            st.warning(
+                "Please select at least one segment."
             )
 
         else:
 
-            st.warning(
-                "No segment forecast could be generated."
-            )
+            for i, group in enumerate(selected_groups):
+
+                group_data = filtered_df[
+                    filtered_df[dimension] == group
+                ]
+
+                group_ts = prepare_time_series(
+                    group_data
+                )
+
+                if len(group_ts) < 24:
+
+                    st.warning(
+                        f"{group}: Insufficient monthly history."
+                    )
+
+                    progress.progress(
+                        (i + 1) / len(selected_groups)
+                    )
+
+                    continue
+
+                try:
+
+                    model = make_sarima_model(
+                        group_ts
+                    )
+
+                    predictions = model.get_forecast(
+                        steps=periods
+                    ).predicted_mean
+
+                    for date, value in predictions.items():
+
+                        results.append({
+
+                            dimension: group,
+
+                            "Forecast Date": date,
+
+                            "Forecasted Sales": value
+
+                        })
+
+                except Exception as e:
+
+                    st.warning(
+                        f"Forecast failed for {group}: {e}"
+                    )
+
+                progress.progress(
+                    (i + 1) / len(selected_groups)
+                )
+
+            if results:
+
+                result_df = pd.DataFrame(
+                    results
+                )
+
+                st.session_state["segment_forecast"] = (
+                    result_df
+                )
+
+                st.success(
+                    "Segment forecasting completed!"
+                )
+
+            else:
+
+                st.warning(
+                    "No forecasts were generated."
+                )
+
+    # Display segment forecast
 
     if "segment_forecast" in st.session_state:
 
-        result_df = st.session_state["segment_forecast"]
+        result_df = st.session_state[
+            "segment_forecast"
+        ]
 
-        st.subheader("Forecast Table")
+        st.subheader(
+            "Category / Region Forecast Results"
+        )
 
         st.dataframe(
             result_df,
@@ -1506,9 +1757,9 @@ elif menu == "Category & Region Forecasting":
             result_df,
             x="Forecast Date",
             y="Forecasted Sales",
-            color=forecast_dimension,
+            color=dimension,
             markers=True,
-            title=f"{forecast_dimension}-wise Sales Forecast"
+            title=f"{dimension}-wise Sales Forecast"
         )
 
         st.plotly_chart(
@@ -1517,7 +1768,7 @@ elif menu == "Category & Region Forecasting":
         )
 
         comparison = (
-            result_df.groupby(forecast_dimension)
+            result_df.groupby(dimension)
             ["Forecasted Sales"]
             .sum()
             .reset_index()
@@ -1529,10 +1780,10 @@ elif menu == "Category & Region Forecasting":
 
         fig = px.bar(
             comparison,
-            x=forecast_dimension,
+            x=dimension,
             y="Forecasted Sales",
-            color=forecast_dimension,
-            title="Total Forecasted Sales by Segment"
+            color=dimension,
+            title="Forecasted Revenue Comparison"
         )
 
         st.plotly_chart(
@@ -1542,20 +1793,22 @@ elif menu == "Category & Region Forecasting":
 
         download_csv(
             result_df,
-            "category_region_forecast.csv"
+            "segment_forecast.csv"
         )
 
 
 # ============================================================
-# 14. ANOMALY DETECTION
+# 14. MODULE 6: ANOMALY DETECTION
 # ============================================================
 
 elif menu == "Anomaly Detection":
 
-    st.title("🚨 Sales Anomaly Detection")
+    st.title(
+        "🚨 Sales Anomaly Detection"
+    )
 
     st.markdown(
-        "### Identify unusual sales transactions using Isolation Forest."
+        "### Detect unusual sales transactions using Isolation Forest."
     )
 
     contamination = st.slider(
@@ -1567,27 +1820,32 @@ elif menu == "Anomaly Detection":
     )
 
     if st.button(
-        "Detect Sales Anomalies",
+        "🔍 Detect Sales Anomalies",
         use_container_width=True
     ):
 
         with st.spinner(
-            "Analyzing sales transactions..."
+            "Analyzing transactions..."
         ):
 
             try:
 
                 anomaly_data = filtered_df.copy()
 
+                # Feature engineering
+
                 features = anomaly_data[
-                    ["Sales", "Month", "Quarter"]
+                    [
+                        "Sales",
+                        "Month",
+                        "Quarter"
+                    ]
                 ].copy()
 
                 if len(features) < 10:
 
                     st.error(
-                        "At least 10 records are recommended "
-                        "for anomaly detection."
+                        "At least 10 transactions are recommended."
                     )
 
                 else:
@@ -1634,6 +1892,8 @@ elif menu == "Anomaly Detection":
                     f"Anomaly detection error: {e}"
                 )
 
+    # Results
+
     if "anomaly_results" in st.session_state:
 
         anomaly_data = st.session_state[
@@ -1676,14 +1936,13 @@ elif menu == "Anomaly Detection":
             x="Order Date",
             y="Sales",
             color="Anomaly",
-            size="Sales",
             hover_data=[
                 "Category",
                 "Region",
                 "Product Name",
                 "Anomaly Score"
             ],
-            title="Normal vs Anomalous Sales Transactions"
+            title="Normal vs Anomalous Sales"
         )
 
         st.plotly_chart(
@@ -1691,7 +1950,37 @@ elif menu == "Anomaly Detection":
             use_container_width=True
         )
 
-        st.subheader("Detected Anomalies")
+        # Anomaly Distribution
+
+        anomaly_summary = (
+            anomaly_data["Anomaly"]
+            .value_counts()
+            .reset_index()
+        )
+
+        anomaly_summary.columns = [
+            "Status",
+            "Count"
+        ]
+
+        fig = px.pie(
+            anomaly_summary,
+            names="Status",
+            values="Count",
+            hole=0.5,
+            title="Anomaly Distribution"
+        )
+
+        st.plotly_chart(
+            plot_layout(fig),
+            use_container_width=True
+        )
+
+        # Detected records
+
+        st.subheader(
+            "Detected Anomalous Transactions"
+        )
 
         anomalies = anomaly_data[
             anomaly_data["Anomaly"] == "Anomaly"
@@ -1709,18 +1998,24 @@ elif menu == "Anomaly Detection":
             "sales_anomaly_results.csv"
         )
 
+        st.caption(
+            "Anomaly detection identifies unusual statistical patterns; "
+            "an anomaly is not necessarily an error or fraud."
+        )
+
 
 # ============================================================
-# 15. PRODUCT DEMAND SEGMENTATION
+# 15. MODULE 7: PRODUCT DEMAND SEGMENTATION
 # ============================================================
 
 elif menu == "Product Demand Segmentation":
 
-    st.title("🎯 Product Demand Segmentation")
+    st.title(
+        "🎯 Product Demand Segmentation"
+    )
 
     st.markdown(
-        "### Group products according to their sales performance "
-        "using K-Means Clustering."
+        "### Classify products using K-Means Clustering."
     )
 
     n_clusters = st.slider(
@@ -1731,7 +2026,7 @@ elif menu == "Product Demand Segmentation":
     )
 
     if st.button(
-        "Run Product Segmentation",
+        "🚀 Run Product Segmentation",
         use_container_width=True
     ):
 
@@ -1741,17 +2036,31 @@ elif menu == "Product Demand Segmentation":
 
             try:
 
+                # Aggregate product-level features
+
                 product_data = (
                     filtered_df.groupby("Product Name")
                     .agg(
 
-                        Total_Sales=("Sales", "sum"),
+                        Total_Sales=(
+                            "Sales",
+                            "sum"
+                        ),
 
-                        Average_Sales=("Sales", "mean"),
+                        Average_Sales=(
+                            "Sales",
+                            "mean"
+                        ),
 
-                        Transaction_Count=("Sales", "count"),
+                        Transaction_Count=(
+                            "Sales",
+                            "count"
+                        ),
 
-                        Active_Months=("Order Date", "nunique")
+                        Active_Months=(
+                            "Year-Month",
+                            "nunique"
+                        )
 
                     )
                     .reset_index()
@@ -1765,11 +2074,13 @@ elif menu == "Product Demand Segmentation":
                 if len(product_data) < n_clusters:
 
                     st.error(
-                        "The number of products must be at least "
-                        "equal to the selected clusters."
+                        "Number of products must be greater "
+                        "than or equal to the selected clusters."
                     )
 
                 else:
+
+                    # Clustering features
 
                     features = product_data[
                         [
@@ -1798,8 +2109,7 @@ elif menu == "Product Demand Segmentation":
                         )
                     )
 
-                    # Rank clusters by total revenue.
-                    # Cluster IDs themselves have no business meaning.
+                    # Rank clusters by average total revenue
 
                     cluster_order = (
                         product_data.groupby("Cluster")
@@ -1811,14 +2121,19 @@ elif menu == "Product Demand Segmentation":
                     )
 
                     labels = {
+
                         cluster: f"Segment {rank + 1}"
+
                         for rank, cluster in enumerate(
                             cluster_order.index
                         )
+
                     }
 
                     product_data["Segment"] = (
-                        product_data["Cluster"].map(labels)
+                        product_data["Cluster"].map(
+                            labels
+                        )
                     )
 
                     st.session_state["product_segments"] = (
@@ -1835,27 +2150,45 @@ elif menu == "Product Demand Segmentation":
                     f"Clustering error: {e}"
                 )
 
+    # Display results
+
     if "product_segments" in st.session_state:
 
         product_data = st.session_state[
             "product_segments"
         ]
 
-        st.subheader("Product Segmentation Results")
-
         cluster_summary = (
             product_data.groupby("Segment")
             .agg(
 
-                Total_Products=("Product Name", "count"),
+                Total_Products=(
+                    "Product Name",
+                    "count"
+                ),
 
-                Total_Sales=("Total_Sales", "sum"),
+                Total_Sales=(
+                    "Total_Sales",
+                    "sum"
+                ),
 
-                Average_Sales=("Average_Sales", "mean")
+                Average_Sales=(
+                    "Average_Sales",
+                    "mean"
+                ),
+
+                Total_Transactions=(
+                    "Transaction_Count",
+                    "sum"
+                )
 
             )
             .reset_index()
         )
+
+        st.markdown("---")
+
+        # KPI Cards
 
         c1, c2, c3 = st.columns(3)
 
@@ -1866,7 +2199,7 @@ elif menu == "Product Demand Segmentation":
 
         c2.metric(
             "Total Segments",
-            f"{product_data['Segment'].nunique()}"
+            product_data["Segment"].nunique()
         )
 
         c3.metric(
@@ -1880,6 +2213,8 @@ elif menu == "Product Demand Segmentation":
 
         left, right = st.columns(2)
 
+        # Scatter Plot
+
         with left:
 
             fig = px.scatter(
@@ -1887,15 +2222,17 @@ elif menu == "Product Demand Segmentation":
                 x="Total_Sales",
                 y="Average_Sales",
                 color="Segment",
-                hover_name="Product Name",
                 size="Transaction_Count",
-                title="Product Segmentation"
+                hover_name="Product Name",
+                title="Product Demand Segmentation"
             )
 
             st.plotly_chart(
                 plot_layout(fig),
                 use_container_width=True
             )
+
+        # Revenue by Segment
 
         with right:
 
@@ -1912,14 +2249,37 @@ elif menu == "Product Demand Segmentation":
                 use_container_width=True
             )
 
-        st.subheader("Segment Summary")
+        # Product Count
+
+        fig = px.pie(
+            cluster_summary,
+            names="Segment",
+            values="Total_Products",
+            hole=0.5,
+            title="Product Distribution by Segment"
+        )
+
+        st.plotly_chart(
+            plot_layout(fig),
+            use_container_width=True
+        )
+
+        # Summary
+
+        st.subheader(
+            "Product Segment Summary"
+        )
 
         st.dataframe(
             cluster_summary,
             use_container_width=True
         )
 
-        st.subheader("Product-level Classification")
+        # Product-level Results
+
+        st.subheader(
+            "Product-level Classification"
+        )
 
         st.dataframe(
             product_data.sort_values(
@@ -1934,6 +2294,11 @@ elif menu == "Product Demand Segmentation":
             "product_demand_segments.csv"
         )
 
+        download_csv(
+            cluster_summary,
+            "product_segment_summary.csv"
+        )
+
 
 # ============================================================
 # 16. FOOTER
@@ -1943,7 +2308,11 @@ st.markdown("---")
 
 st.markdown(
     """
-    <div style="text-align:center; color:#94a3b8; padding:15px;">
+    <div style="
+        text-align:center;
+        color:#94a3b8;
+        padding:15px;
+    ">
 
         <h4 style="color:#38bdf8;">
             📊 Sales Forecasting & Intelligence Dashboard
@@ -1951,11 +2320,12 @@ st.markdown(
 
         <p>
             Built using Python | Streamlit | Pandas |
-            Plotly | Scikit-learn | Statsmodels
+            NumPy | Plotly | Scikit-learn | Statsmodels
         </p>
 
         <p>
-            Data Analytics • Machine Learning • Time Series Forecasting
+            Data Analytics • Machine Learning •
+            Time Series Forecasting
         </p>
 
     </div>

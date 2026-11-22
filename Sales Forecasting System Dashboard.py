@@ -14,6 +14,8 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import warnings
 import io
+import re
+import zipfile
 
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
@@ -130,15 +132,52 @@ menu = st.sidebar.radio(
 # 4. DATA LOADING
 # ============================================================
 
+
+# ============================================================
+# 4. DATA LOADING AND DATA PREPROCESSING
+# ============================================================
+
 @st.cache_data(show_spinner=False)
 def load_data(file_bytes, file_name):
 
-    if file_name.lower().endswith((".xlsx", ".xls")):
+    file_name = file_name.lower()
+
+    # Excel files
+    if file_name.endswith(".xlsx"):
         df = pd.read_excel(io.BytesIO(file_bytes))
+
+    elif file_name.endswith(".xls"):
+        df = pd.read_excel(io.BytesIO(file_bytes))
+
+    # ZIP files
+    elif file_name.endswith(".zip"):
+
+        with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
+
+            csv_files = [
+                f for f in z.namelist()
+                if f.lower().endswith(".csv")
+                and not f.startswith("__MACOSX/")
+            ]
+
+            if not csv_files:
+                raise ValueError(
+                    "ZIP file ke andar koi CSV file nahi mili."
+                )
+
+            with z.open(csv_files[0]) as csv_file:
+
+                df = pd.read_csv(csv_file)
+
+    # Normal CSV files
+    elif file_name.endswith(".csv"):
+
+        df = pd.read_csv(io.BytesIO(file_bytes))
+
     else:
-        df = pd.read_csv(
-            io.BytesIO(file_bytes),
-            compression="infer"
+
+        raise ValueError(
+            "Unsupported file format. Upload CSV, ZIP or Excel."
         )
 
     return df
@@ -148,46 +187,137 @@ def preprocess_data(data):
 
     df = data.copy()
 
-    df.columns = df.columns.str.strip()
+    # --------------------------------------------------------
+    # STEP 1: CLEAN COLUMN NAMES
+    # --------------------------------------------------------
 
-    required_columns = ["Order Date", "Sales"]
+    df.columns = [
+        re.sub(r"[^a-z0-9]", "", str(col).lower())
+        for col in df.columns
+    ]
 
-    for col in required_columns:
+    # --------------------------------------------------------
+    # STEP 2: AUTOMATIC COLUMN MAPPING
+    # --------------------------------------------------------
 
-        if col not in df.columns:
-            raise ValueError(
-                f"Required column missing: {col}"
-            )
+    column_mapping = {
 
-    # Convert dates
-    df["Order Date"] = pd.to_datetime(
+        # Date columns
+        "orderdate": "Order Date",
+        "date": "Order Date",
+        "salesdate": "Order Date",
+        "transactiondate": "Order Date",
+
+        # Sales columns
+        "sales": "Sales",
+        "revenue": "Sales",
+        "totalsales": "Sales",
+        "amount": "Sales",
+
+        # Category columns
+        "category": "Category",
+        "productcategory": "Category",
+        "family": "Category",
+
+        # Region / Store columns
+        "region": "Region",
+        "store": "Region",
+        "storenbr": "Region",
+        "storeid": "Region",
+
+        # Product columns
+        "productname": "Product Name",
+        "product": "Product Name",
+        "item": "Product Name",
+
+        # Other columns
+        "subcategory": "Sub-Category",
+        "orderid": "Order ID",
+        "customerid": "Customer ID",
+        "segment": "Segment",
+        "shipmode": "Ship Mode"
+    }
+
+    df.rename(
+        columns=column_mapping,
+        inplace=True
+    )
+
+    # --------------------------------------------------------
+    # STEP 3: VALIDATE REQUIRED COLUMNS
+    # --------------------------------------------------------
+
+    if "Order Date" not in df.columns:
+
+        raise ValueError(
+            "Date column not found. Available columns: "
+            + str(df.columns.tolist())
+        )
+
+    if "Sales" not in df.columns:
+
+        raise ValueError(
+            "Sales column not found. Available columns: "
+            + str(df.columns.tolist())
+        )
+
+    # --------------------------------------------------------
+    # STEP 4: DATE CONVERSION
+    # --------------------------------------------------------
+
+    dates = pd.to_datetime(
         df["Order Date"],
-        format="%d/%m/%Y",
         errors="coerce"
     )
 
-    # Handle other date formats
-    if df["Order Date"].isna().mean() > 0.5:
+    # Try day-first parsing if most dates failed
+    if dates.isna().mean() > 0.5:
 
-        df["Order Date"] = pd.to_datetime(
-            data["Order Date"],
-            dayfirst=True,
-            errors="coerce"
+        dates = pd.to_datetime(
+            df["Order Date"],
+            errors="coerce",
+            dayfirst=True
         )
 
-    # Convert sales to numeric
+    df["Order Date"] = dates
+
+    # --------------------------------------------------------
+    # STEP 5: SALES CONVERSION
+    # --------------------------------------------------------
+
+    df["Sales"] = (
+        df["Sales"]
+        .astype(str)
+        .str.replace(",", "", regex=False)
+        .str.replace("$", "", regex=False)
+        .str.strip()
+    )
+
     df["Sales"] = pd.to_numeric(
         df["Sales"],
         errors="coerce"
     )
 
-    # Remove invalid essential records
+    # --------------------------------------------------------
+    # STEP 6: REMOVE INVALID RECORDS
+    # --------------------------------------------------------
+
     df.dropna(
         subset=["Order Date", "Sales"],
         inplace=True
     )
 
-    # Add optional categorical columns
+    if df.empty:
+
+        raise ValueError(
+            "Date aur Sales conversion ke baad dataset empty hai. "
+            "Please check your dataset values."
+        )
+
+    # --------------------------------------------------------
+    # STEP 7: OPTIONAL COLUMN HANDLING
+    # --------------------------------------------------------
+
     optional_columns = [
         "Category",
         "Sub-Category",
@@ -199,9 +329,18 @@ def preprocess_data(data):
         "Ship Mode"
     ]
 
+    # If Product Name is missing but Category exists,
+    # use Category as a fallback for product-level display.
+    if "Product Name" not in df.columns:
+
+        if "Category" in df.columns:
+
+            df["Product Name"] = df["Category"]
+
     for col in optional_columns:
 
         if col not in df.columns:
+
             df[col] = "Unknown"
 
         df[col] = (
@@ -210,13 +349,24 @@ def preprocess_data(data):
             .astype(str)
         )
 
-    # Feature engineering
+    # --------------------------------------------------------
+    # STEP 8: FEATURE ENGINEERING
+    # --------------------------------------------------------
+
     df["Year"] = df["Order Date"].dt.year
+
     df["Month"] = df["Order Date"].dt.month
-    df["Month Name"] = df["Order Date"].dt.month_name()
-    df["Quarter"] = df["Order Date"].dt.quarter
+
+    df["Month Name"] = (
+        df["Order Date"].dt.month_name()
+    )
+
+    df["Quarter"] = (
+        df["Order Date"].dt.quarter
+    )
 
     return df.sort_values("Order Date")
+
 
 
 # ============================================================
@@ -241,6 +391,20 @@ if uploaded_file is not None:
         )
 
         df = preprocess_data(raw_data)
+        st.sidebar.success("Dataset loaded successfully!")
+
+with st.expander("Check Dataset Information"):
+
+    st.write("Original Columns:")
+    st.write(raw_data.columns.tolist())
+
+    st.write("Processed Columns:")
+    st.write(df.columns.tolist())
+
+    st.write("Dataset Shape:", df.shape)
+
+    st.dataframe(df.head())
+        
 
         st.sidebar.success("Dataset loaded successfully!")
 

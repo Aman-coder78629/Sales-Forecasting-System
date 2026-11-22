@@ -373,6 +373,7 @@ def preprocess_data(data):
 # 5. UPLOAD DATASET
 # ============================================================
 
+
 st.sidebar.markdown("---")
 st.sidebar.subheader("Upload Dataset")
 
@@ -384,29 +385,29 @@ uploaded_file = st.sidebar.file_uploader(
 if uploaded_file is not None:
 
     try:
-
+        # Load dataset
         raw_data = load_data(
             uploaded_file.getvalue(),
             uploaded_file.name
         )
 
+        # Preprocess dataset
         df = preprocess_data(raw_data)
-        st.sidebar.success("Dataset loaded successfully!")
-
-with st.expander("Check Dataset Information"):
-
-    st.write("Original Columns:")
-    st.write(raw_data.columns.tolist())
-
-    st.write("Processed Columns:")
-    st.write(df.columns.tolist())
-
-    st.write("Dataset Shape:", df.shape)
-
-    st.dataframe(df.head())
-        
 
         st.sidebar.success("Dataset loaded successfully!")
+
+        # Dataset information
+        with st.expander("Check Dataset Information"):
+
+            st.write("Original Columns:")
+            st.write(raw_data.columns.tolist())
+
+            st.write("Processed Columns:")
+            st.write(df.columns.tolist())
+
+            st.write("Dataset Shape:", df.shape)
+
+            st.dataframe(df.head())
 
     except Exception as e:
 

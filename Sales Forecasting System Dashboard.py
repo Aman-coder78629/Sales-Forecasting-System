@@ -935,4 +935,5 @@ elif menu == "Sales Forecasting":
 
         st.error(
             "The seasonal SARIMAX model requires at least "
+    )
    

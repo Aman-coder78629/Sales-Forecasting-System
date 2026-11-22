@@ -14,6 +14,39 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import warnings
 import io
+import re
+
+def clean_column_names(df):
+    # Remove extra spaces and normalize column names
+    df.columns = [
+        re.sub(r'[\s_]+', ' ', str(col)).strip()
+        for col in df.columns
+    ]
+
+    # Automatically identify common column names
+    column_mapping = {
+        'order date': 'Order Date',
+        'orderdate': 'Order Date',
+        'date': 'Order Date',
+        'sales date': 'Order Date',
+        'sales': 'Sales',
+        'revenue': 'Sales',
+        'total sales': 'Sales',
+        'amount': 'Sales',
+        'category': 'Category',
+        'region': 'Region',
+        'sub category': 'Sub-Category',
+        'sub-category': 'Sub-Category',
+        'product name': 'Product Name'
+    }
+
+    df.columns = [
+        column_mapping.get(str(col).lower(), col)
+        for col in df.columns
+    ]
+
+    return df
+
 
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
